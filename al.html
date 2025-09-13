@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Campus Chatbot — HTML Frontend</title>
+  <style>
+    :root{
+      --maxw:1000px;
+      --muted:#666;
+      --card:bg(#fff);
+    }
+    body{
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      background: #f6f7fb;
+      margin: 0;
+      padding: 20px;
+      display:flex;
+      justify-content:center;
+    }
+    .app {
+      width:100%;
+      max-width: var(--maxw);
+      background:#fff;
+      border-radius:12px;
+      box-shadow: 0 6px 30px rgba(20,20,50,0.06);
+      padding:18px;
+      box-sizing:border-box;
+    }
+    header{display:flex;align-items:center;justify-content:space-between}
+    h1{margin:0;font-size:20px}
+    .layout{display:grid;grid-template-columns:1fr 360px;gap:18px;margin-top:12px}
+    .panel{background:#fbfdff;border:1px solid #eef2ff;padding:12px;border-radius:10px;min-height:120px}
+    .chat-window{height:460px;overflow:auto;padding:10px;border-radius:8px;background:#fff;border:1px solid #e6e9f2}
+    .message{margin:8px 0;display:flex}
+    .message.user{justify-content:flex-end}
+    .bubble{max-width:78%;padding:10px 12px;border-radius:12px;background:#f1f5ff;border:1px solid #edf2ff}
+    .bubble.user{background:#e6fff2;border:1px solid #d1f0d9}
+    form.controls{display:flex;margin-top:8px;gap:8px}
+    input[type="text"]{flex:1;padding:10px;border-radius:8px;border:1px solid #dfe6ff}
+    button{padding:10px 12px;border-radius:8px;border:0;background:#3b82f6;color:#fff;cursor:pointer}
+    .small{font-size:13px;color:var(--muted)}
+    .tabs{display:flex;gap:8px;margin-bottom:8px}
+    .tabs button{background:transparent;border:1px solid #e6ecff;padding:6px 10px;border-radius:8px;cursor:pointer}
+    .list{margin-top:8px}
+    .item{padding:8px;border-radius:8px;border:1px solid #eef2ff;margin-bottom:8px;background:#fff}
+    .topbar{display:flex;gap:12px;align-items:center}
+    .api-input{padding:8px;border-radius:8px;border:1px solid #e6ecff}
+    .note{margin-top:12px;color:#6b7280;font-size:13px}
+    .loading{opacity:0.6}
+  </style>
+</head>
+<body>
+  <div class="app" role="main">
+    <header>
+      <h1>Campus Chatbot (HTML)</h1>
+      <div class="topbar">
+        <label class="small">API base:</label>
+        <input id="apiBaseInput" class="api-input" type="text" placeholder="http://localhost:8000" value="http://localhost:8000" style="width:280px">
+        <button id="saveBaseBtn">Use</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <!-- Left: chat + quick queries -->
+      <div>
+        <div class="panel">
+          <div class="small">Quick actions:</div>
+          <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+            <button onclick="fetchAndShow('schedules')">Load Schedules</button>
+            <button onclick="fetchAndShow('facilities')">Load Facilities</button>
+            <button onclick="fetchAndShow('dining')">Load Dining</button>
+            <button onclick="fetchAndShow('library')">Load Library</button>
+            <button onclick="presetAsk('When are midterm exams?')">Ask: Midterm dates</button>
+            <button onclick="presetAsk('What are library hours today?')">Ask: Library hours</button>
+            <button onclick="presetAsk('Where is the health center located?')">Ask: Health center</button>
+          </div>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="chat-window" id="chatWindow" aria-live="polite"></div>
+
+          <form id="chatForm" class="controls" onsubmit="return handleSend(event)">
+            <input id="chatInput" type="text" placeholder="Ask about schedules, facilities, dining, library, admin..." autocomplete="off" />
+            <button type="submit">Send</button>
+          </form>
+
+          <div class="note">Tip: set API base to your backend if not on <code>http://localhost:8000</code>.</div>
+        </div>
+      </div>
+
+      <!-- Right: results / lists -->
+      <div>
+        <div class="panel">
+          <div class="tabs" role="tablist">
+            <button id="tabSchedules" onclick="showTab('schedules')">Schedules</button>
+            <button id="tabFacilities" onclick="showTab('facilities')">Facilities</button>
+            <button id="tabDining" onclick="showTab('dining')">Dining</button>
+            <button id="tabLibrary" onclick="showTab('library')">Library</button>
+          </div>
+
+          <div id="contentArea" class="list">
+            <div id="schedules" class="tabContent"></div>
+            <div id="facilities" class="tabContent" style="display:none"></div>
+            <div id="dining" class="tabContent" style="display:none"></div>
+            <div id="library" class="tabContent" style="display:none"></div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-top:12px">
+          <div class="small">Status</div>
+          <div id="status" class="small">Ready</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Default API base; user can change it in top input and hit Use
+  let API_BASE = (localStorage.getItem('campus_api_base') || document.getElementById('apiBaseInput').value || 'http://localhost:8000').replace(/\/+$/, '');
+  document.getElementById('apiBaseInput').value = API_BASE;
+
+  document.getElementById('saveBaseBtn').addEventListener('click', () => {
+    const v = document.getElementById('apiBaseInput').value.trim();
+    if (v) {
+      API_BASE = v.replace(/\/+$/, '');
+      localStorage.setItem('campus_api_base', API_BASE);
+      setStatus('API base set to ' + API_BASE);
+    }
+  });
+
+  const chatWindow = document.getElementById('chatWindow');
+  const statusEl = document.getElementById('status');
+
+  function setStatus(t){
+    statusEl.textContent = t;
+  }
+
+  function appendMessage(text, who='bot'){
+    const wrap = document.createElement('div');
+    wrap.className = 'message ' + (who === 'user' ? 'user' : 'bot');
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ' + (who === 'user' ? 'user' : '');
+    const meta = document.createElement('div');
+    meta.style.fontSize = '11px';
+    meta.style.opacity = '0.7';
+    meta.textContent = who === 'user' ? 'You' : 'Bot';
+    const content = document.createElement('div');
+    content.style.marginTop = '6px';
+    content.textContent = text;
+    bubble.appendChild(meta);
+    bubble.appendChild(content);
+    wrap.appendChild(bubble);
+    chatWindow.appendChild(wrap);
+    chatWindow.scrollTop = chatWindow.scrollHeight;
+  }
+
+  // Initial greeting
+  appendMessage('Hi — I am the Campus Assistant. Ask me about schedules, facilities, dining, library, or admin procedures.', 'bot');
+
+  // Handle sending chat message
+  async function handleSend(e){
+    e.preventDefault();
+    const input = document.getElementById('chatInput');
+    const msg = input.value.trim();
+    if(!msg) return false;
+    appendMessage(msg, 'user');
+    input.value = '';
+    setStatus('Sending to /chat...');
+    appendMessage('...', 'bot');
+    try{
+      const res = await fetch(API_BASE + '/chat', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({message: msg})
+      });
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      // Remove the '...' placeholder (last bot message)
+      const items = chatWindow.querySelectorAll('.message');
+      if(items.length){
+        const last = items[items.length - 1];
+        const lastText = last.innerText || '';
+        if(lastText.trim() === 'Bot\n...') last.remove();
+      }
+      appendMessage(data.reply || '[no reply]', 'bot');
+      setStatus('Reply received');
+    }catch(err){
+      // remove placeholder
+      const items = chatWindow.querySelectorAll('.message');
+      if(items.length){
+        const last = items[items.length - 1];
+        const lastText = last.innerText || '';
+        if(lastText.trim() === 'Bot\n...') last.remove();
+      }
+      appendMessage('Error contacting backend: ' + (err.message || err), 'bot');
+      setStatus('Error');
+    }
+    return false;
+  }
+
+  // Quick fetch for lists
+  async function fetchAndShow(kind){
+    setStatus('Loading ' + kind + ' ...');
+    const container = document.getElementById(kind);
+    container.innerHTML = '<div class="small">Loading…</div>';
+    try{
+      const res = await fetch(API_BASE + '/' + kind);
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      renderList(kind, data);
+      setStatus('Loaded ' + kind);
+    }catch(err){
+      container.innerHTML = '<div class="small">Failed: ' + (err.message || err) + '</div>';
+      setStatus('Error loading ' + kind);
+    }
+  }
+
+  function renderList(kind, items){
+    const container = document.getElementById(kind);
+    if(!items || items.length === 0){
+      container.innerHTML = '<div class="small">No items found.</div>';
+      return;
+    }
+    container.innerHTML = '';
+    items.forEach(it => {
+      const d = document.createElement('div');
+      d.className = 'item';
+      let html = '';
+      if(kind === 'schedules'){
+        html = '<strong>' + escapeHtml(it.title || 'Untitled') + '</strong><div class="small">' + escapeHtml(it.date || '') + '</div>';
+        if(it.description) html += '<div>' + escapeHtml(it.description) + '</div>';
+      } else if(kind === 'facilities'){
+        html = '<strong>' + escapeHtml(it.name || 'Facility') + '</strong>';
+        if(it.location) html += '<div class="small">Location: ' + escapeHtml(it.location) + '</div>';
+        if(it.hours) html += '<div class="small">Hours: ' + escapeHtml(it.hours) + '</div>';
+      } else if(kind === 'dining'){
+        html = '<strong>' + escapeHtml(it.name || 'Dining') + '</strong>';
+        if(it.cuisine) html += '<div class="small">Cuisine: ' + escapeHtml(it.cuisine) + '</div>';
+        if(it.hours) html += '<div class="small">Hours: ' + escapeHtml(it.hours) + '</div>';
+      } else if(kind === 'library'){
+        html = '<strong>' + escapeHtml(it.title || 'Book') + '</strong>';
+        if(it.author) html += '<div class="small">Author: ' + escapeHtml(it.author) + '</div>';
+        if(it.call_number) html += '<div class="small">Call#: ' + escapeHtml(it.call_number) + '</div>';
+      } else {
+        html = '<pre>' + JSON.stringify(it, null, 2) + '</pre>';
+      }
+      d.innerHTML = html;
+      container.appendChild(d);
+    });
+  }
+
+  function escapeHtml(s){
+    if(!s) return '';
+    return s.toString().replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]; });
+  }
+
+  // Tabs
+  function showTab(name){
+    ['schedules','facilities','dining','library'].forEach(n => {
+      document.getElementById(n).style.display = (n === name ? 'block' : 'none');
+    });
+    // automatically fetch when switching
+    fetchAndShow(name);
+  }
+
+  // preset ask (fills input and sends)
+  function presetAsk(text){
+    document.getElementById('chatInput').value = text;
+    handleSend(new Event('submit'));
+  }
+
+  // On load: fetch schedules by default
+  window.addEventListener('load', () => {
+    showTab('schedules');
+  });
+</script>
+</body>
+</html>
